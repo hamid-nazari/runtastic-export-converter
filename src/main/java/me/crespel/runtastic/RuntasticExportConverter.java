@@ -17,7 +17,7 @@ import me.crespel.runtastic.model.User;
 
 /**
  * Runtastic export converter main class.
- * 
+ *
  * @author Fabien CRESPEL (fabien@crespel.net)
  * @author Christian IMFELD (imfeldc@gmail.com)
  */
@@ -30,7 +30,7 @@ public class RuntasticExportConverter {
 		try {
 			converter.run(args);
 		} catch (Throwable t) {
-			System.out.println(t);
+			t.printStackTrace();
 			converter.printUsage();
 			System.exit(1);
 		}
@@ -122,6 +122,8 @@ public class RuntasticExportConverter {
 		Integer imageCount = 0;
 		Integer minDistance = Integer.MAX_VALUE, maxDistance = 0, totDistance = 0;
 		for (SportSession session : fullsessions) {
+			if(session == null)
+				continue;
 			if (session.getGpx() != null)
 				gpxSessionCount += 1;
 			if (session.getHeartRateData() != null)
@@ -390,15 +392,15 @@ public class RuntasticExportConverter {
 			List<SportSession> compoundSessions = session.getCompoundSessions();
 			if( (compoundSessions!=null) && (compoundSessions.size() > 0) ) {
 				compoundSessionCount+=1;
-				if( full ) System.out.println("      " + sdf.format(session.getStartTime())  + "["+compoundSessionCount+"] - ID: " + session.getId() + ", Sport Type: " + session.getSportTypeId() + ", Notes: '" + session.getNotes() 
+				if( full ) System.out.println("      " + sdf.format(session.getStartTime())  + "["+compoundSessionCount+"] - ID: " + session.getId() + ", Sport Type: " + session.getSportTypeId() + ", Notes: '" + session.getNotes()
 				+ "', Bounds[MinLat="+session.getGpx().getMetadata().getBounds().getMinlat()
 				+ ", MaxLat="+session.getGpx().getMetadata().getBounds().getMaxlat()
 				+ ", MinLon="+session.getGpx().getMetadata().getBounds().getMinlon()
 				+ ", MaxLon="+session.getGpx().getMetadata().getBounds().getMaxlon()+"]");
 			if( full ) {
 				for( SportSession compoundSession : compoundSessions ) {
-					System.out.println("            ID: " + compoundSession.getId() + ", Sport Type: " + compoundSession.getSportTypeId() 
-					+ ", Notes: '" + compoundSession.getNotes() 
+					System.out.println("            ID: " + compoundSession.getId() + ", Sport Type: " + compoundSession.getSportTypeId()
+					+ ", Notes: '" + compoundSession.getNotes()
 					+ "', Bounds[MinLat="+compoundSession.getGpx().getMetadata().getBounds().getMinlat()
 					+ ", MaxLat="+compoundSession.getGpx().getMetadata().getBounds().getMaxlat()
 					+ ", MinLon="+compoundSession.getGpx().getMetadata().getBounds().getMinlon()

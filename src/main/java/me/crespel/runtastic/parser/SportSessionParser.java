@@ -22,6 +22,7 @@ import javax.xml.bind.Unmarshaller;
 
 import com.topografix.gpx._1._1.GpxType;
 
+import me.crespel.runtastic.converter.ExportConverter;
 import me.crespel.runtastic.model.ElevationData;
 import me.crespel.runtastic.model.GpsData;
 import me.crespel.runtastic.model.HeartRateData;
@@ -101,7 +102,8 @@ public class SportSessionParser {
 				sportSession.setImages(images);
 			}
 			// read and add user
-			sportSession.setUser(parseUser(new File(new File(file.getParentFile().getParentFile(), USER_DIR), "user.json")));
+
+			sportSession.setUser(parseUser(ExportConverter.getUserFile(new File(file.getParentFile().getParentFile(), USER_DIR))));
 			return sportSession;
 		}
 	}
