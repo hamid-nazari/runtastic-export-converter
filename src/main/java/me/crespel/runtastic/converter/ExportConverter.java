@@ -5,11 +5,14 @@ import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.commons.io.filefilter.SuffixFileFilter;
 
@@ -46,16 +49,23 @@ public class ExportConverter
 
 	public List<SportSession> listSportSessions(File path, boolean full) throws FileNotFoundException, IOException
 	{
-		path = normalizeExportPath(path, SPORT_SESSIONS_DIR);
-		List<SportSession> sessions = new ArrayList<>();
-		File[] files = path.listFiles(file -> file.getName().endsWith(".json"));
-		for (File file : files)
-		{
-			sessions.add(parser.parseSportSession(file, full));
-		}
-
-		Collections.sort(sessions);
-		return sessions;
+		return Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
+			.filter(file -> file.getFileName().toString().endsWith(".json"))
+			.parallel()
+			.map(file -> {
+				try
+				{
+					return parser.parseSportSession(file.toFile(), full);
+				}
+				catch (IOException ex)
+				{
+					ex.printStackTrace();
+					return null;
+				}
+			})
+			.filter(s -> s != null)
+			.sorted()
+			.collect(Collectors.toList());
 	}
 
 	public User getUser(File path) throws FileNotFoundException, IOException
@@ -113,24 +123,25 @@ public class ExportConverter
 
 	public List<SportSession> convertSportSessions(File path, String format) throws FileNotFoundException, IOException
 	{
-		File[] files = normalizeExportPath(path, SPORT_SESSIONS_DIR).listFiles(file -> file.getName().endsWith(".json"));
-		List<SportSession> sessionlist = new ArrayList<>();
-		Arrays.asList(files).parallelStream().forEach(file -> {
-			try
-			{
-				SportSession session = parser.parseSportSession(file, true);
-				if (session.getGpsData() != null || session.getHeartRateData() != null || session.getGpx() != null)
+		return Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
+			.filter(p -> p.getFileName().toString().endsWith(".json"))
+			.map(file -> {
+				try
 				{
-					mapper.mapSportSession(session, format);
+					return parser.parseSportSession(file.toFile(), true);
 				}
-				sessionlist.add(session);
-			}
-			catch (IOException e)
-			{
-				throw new RuntimeException(e);
-			}
-		});
-		return sessionlist;
+				catch (IOException ex)
+				{
+					ex.printStackTrace();
+					return null;
+				}
+			})
+			.filter(s -> s != null)
+			.map(session -> {
+				if (session.getGpsData() != null || session.getHeartRateData() != null || session.getGpx() != null)
+					mapper.mapSportSession(session, format);
+				return session;
+			}).collect(Collectors.toList());
 	}
 
 	public void exportSportSession(SportSession session, File dest, String format) throws FileNotFoundException, IOException
@@ -198,7 +209,7 @@ public class ExportConverter
 						{
 							BoundsType bounds = session.getGpx().getMetadata().getBounds();
 							BoundsType bounds2 = session2.getGpx().getMetadata().getBounds();
-							if(bounds != null && bounds2 != null && bounds.getMaxlat() != null && bounds2.getMaxlat() != null)
+							if (bounds != null && bounds2 != null && bounds.getMaxlat() != null && bounds2.getMaxlat() != null)
 							{
 								BigDecimal diffMaxlat = bounds.getMaxlat().subtract(bounds2.getMaxlat()).abs();
 								BigDecimal diffMaxlon = bounds.getMaxlon().subtract(bounds2.getMaxlon()).abs();
