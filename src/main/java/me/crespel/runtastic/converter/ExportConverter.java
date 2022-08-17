@@ -8,10 +8,12 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.SimpleDateFormat;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.io.filefilter.SuffixFileFilter;
@@ -81,6 +83,7 @@ public class ExportConverter
 	{
 		return Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
 			.filter(p -> p.getFileName().toString().endsWith(".json"))
+			.parallel()
 			.map(file -> {
 				try
 				{
@@ -118,27 +121,36 @@ public class ExportConverter
 	public int exportSportSessions(File path, File dest, String format) throws FileNotFoundException, IOException
 	{
 		if (dest.exists() && !dest.isDirectory())
-		{
 			throw new IllegalArgumentException("Destination '" + dest + "' is not a valid directory");
-		}
 		dest.mkdirs();
-		File[] files = normalizeExportPath(path, SPORT_SESSIONS_DIR).listFiles(file -> file.getName().endsWith(".json"));
-		Arrays.asList(files).parallelStream().forEach(file -> {
-			try
-			{
-				SportSession session = parser.parseSportSession(file, true);
-				if (session.getGpsData() != null || session.getHeartRateData() != null || session.getGpx() != null)
+		int total = (int) Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
+			.filter(p -> p.getFileName().toString().endsWith(".json"))
+			.count();
+		AtomicInteger counter = new AtomicInteger();
+		return (int) Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
+			.filter(p -> p.getFileName().toString().endsWith(".json"))
+			.parallel()
+			.map(file -> {
+				try
 				{
-					File destFile = new File(dest, buildFileName(session, format));
-					mapper.mapSportSession(session, format, destFile);
+					return parser.parseSportSession(file.toFile(), true);
 				}
-			}
-			catch (IOException e)
-			{
-				throw new RuntimeException(e);
-			}
-		});
-		return files.length;
+				catch (IOException ex)
+				{
+					ex.printStackTrace();
+					return null;
+				}
+			})
+			.filter(s -> s != null)
+			.map(session -> {
+				mapper.mapSportSession(session, format, new File(dest, buildFileName(session, format)));
+				int c = counter.incrementAndGet();
+				if (c % 5 == 0)
+					System.out.println(ZonedDateTime.now() + " - Converted " + c + " / " + total + " (" + (c * 100 / total) + "%) sessions");
+				return session;
+			})
+			.filter(s -> s != null)
+			.count();
 	}
 
 	// Loop through all sport session and add "overlapping" session to each sport session
