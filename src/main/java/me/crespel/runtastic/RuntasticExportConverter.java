@@ -11,7 +11,7 @@ import com.topografix.gpx._1._1.BoundsType;
 
 import me.crespel.runtastic.converter.ExportConverter;
 import me.crespel.runtastic.mapper.SportSessionMapper;
-import me.crespel.runtastic.model.ImagesMetaData;
+import me.crespel.runtastic.model.ImageMetaData;
 import me.crespel.runtastic.model.SportSession;
 import me.crespel.runtastic.model.User;
 
@@ -63,12 +63,6 @@ public class RuntasticExportConverter {
 				}
 				doInfo(new File(args[1]), args[2]);
 				break;
-			case "photo":
-				if (args.length < 3) {
-					throw new IllegalArgumentException("Missing argument for action 'photo'");
-				}
-				doPhoto(new File(args[1]), args[2]);
-				break;
 			case "convert":
 				if (args.length < 4) {
 					throw new IllegalArgumentException("Missing arguments for action 'convert'");
@@ -100,7 +94,6 @@ public class RuntasticExportConverter {
 		System.out.println("  list     <export path> <filter>");
 		System.out.println("  user     <export path>");
 		System.out.println("  info     <export path> <activity id>");
-		System.out.println("  photo    <export path> <photo id>");
 		System.out.println("  convert  <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']");
 		System.out.println("  overlap  <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']");
 		System.out.println("  compound <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']");
@@ -188,10 +181,10 @@ public class RuntasticExportConverter {
 			System.out.println("      Elevation: (+) " + session.getElevationGain() + " m , (-) " + session.getElevationLoss() + " m  /  " + ( session.getLatitude() != null ? "Latitude: " + session.getLatitude() + ", Longitude: " + session.getLongitude() + "  ( http://maps.google.com/maps?q=" + session.getLatitude() + "," + session.getLongitude() + " )" : "No GPS information available.") );
 			System.out.println("      Notes: " + session.getNotes());
 			System.out.println("      Waypoints: " + ((session.getGpsData() == null) ? "0" : session.getGpsData().size()) + " JSON points, " + ((session.getGpx() == null) ? "0" : session.getGpx().getTrk().get(0).getTrkseg().get(0).getTrkpt().size()) + " GPX points.");
-			System.out.println("      Photos:" + (session.getSessionAlbum() != null ? session.getSessionAlbum().getPhotosIds().toString() : "none"));
+			System.out.println("      Photos:" + (session.getImages() != null ? session.getImages().size() : "none"));
 			if (session.getImages() != null) {
-				for (ImagesMetaData image : session.getImages()) {
-					System.out.println("             [" + image.getId() + ".jpg] " + sdf.format(image.getCreatedAt()) + ": " + image.getDescription() + ( image.getLatitude() != null ? " ( http://maps.google.com/maps?q=" + image.getLatitude() + "," + image.getLongitude() + " )" : "") );
+				for (ImageMetaData image : session.getImages()) {
+					System.out.println("             [" + image.getId() + ".jpg] " + sdf.format(image.getCreatedAt()) + ( image.getLocation() != null ? " ( http://maps.google.com/maps?q=" + image.getLocation().getLatitude() + "," + image.getLocation().getLongitude() + " )" : "") );
 				}
 			}
 			if (session.getUser() != null) {
@@ -200,21 +193,6 @@ public class RuntasticExportConverter {
 				System.out.println("      Mail: " + user.getEmail() + " (" + user.getFbProxiedEMail() + ")");
 				System.out.println("      Gender: " + user.getGender() + ", Height: " + user.getHeight() + ", Weight: " + user.getWeight() + ", Language: " + user.getLanguage());
 				System.out.println("      Created At: " + sdf.format(user.getCreatedAt()) + ",  Confirmed At: " + sdf.format(user.getConfirmedAt()) + ",  Last Sign-in At: " + sdf.format(user.getLastSignInAt()) + ",  Updated At: " + sdf.format(user.getUpdatedAt()));
-			}
-		}
-	}
-
-	protected void doPhoto(File path, String id) throws FileNotFoundException, IOException {
-		SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-		SportSession session = converter.getSportSessionWithPhoto(path, id);
-		for (ImagesMetaData image : session.getImages()) {
-			if (image != null) {
-				if (image.getId() == Integer.parseInt(id)) {
-					doInfo(path, session.getId());
-					System.out.println(sdf.format(session.getStartTime()) + " - ID: " + session.getId());
-					System.out.println("             [" + image.getId() + ".jpg] " + sdf.format(image.getCreatedAt()) + ": " + image.getDescription() );
-					if( image.getLatitude() != null ) System.out.println("             ( http://maps.google.com/maps?q=" + image.getLatitude() + "," + image.getLongitude() + " )");
-				}
 			}
 		}
 	}

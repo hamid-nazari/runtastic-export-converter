@@ -27,12 +27,12 @@ import com.topografix.gpx._1._1.TrksegType;
 import com.topografix.gpx._1._1.WptType;
 
 import me.crespel.runtastic.model.GpsData;
-import me.crespel.runtastic.model.ImagesMetaData;
+import me.crespel.runtastic.model.ImageMetaData;
 import me.crespel.runtastic.model.SportSession;
 
 /**
  * GPX sport session mapper.
- * 
+ *
  * @author Fabien CRESPEL (fabien@crespel.net)
  * @author Christian IMFELD (imfeldc@gmail.com)
  */
@@ -100,12 +100,14 @@ public class GpxSportSessionMapper implements SportSessionMapper<GpxType> {
 	private void mapImages(SportSession session, GpxType gpx) {
 		if (session.getImages() != null) {
 			// Add the photos as "way points"
-			for (ImagesMetaData image : session.getImages()) {
+			for (ImageMetaData image : session.getImages()) {
 				WptType wpt = factory.createWptType();
-				wpt.setLat(image.getLatitude());
-				wpt.setLon(image.getLongitude());
+				if(image.getLocation() != null)
+				{
+					wpt.setLat(image.getLocation().getLatitude());
+					wpt.setLon(image.getLocation().getLongitude());
+				}
 				wpt.setName("Photo: " + image.getId() + ".jpg");
-				wpt.setDesc(image.getDescription());
 				wpt.setType("photo");
 				wpt.setTime(mapDate(image.getCreatedAt()));
 				gpx.getWpt().add(wpt);
@@ -173,25 +175,27 @@ public class GpxSportSessionMapper implements SportSessionMapper<GpxType> {
 
 				if (overlapSession.getImages() != null) {
 					// Add the photos as "way points"
-					for (ImagesMetaData image : overlapSession.getImages()) {
+					for (ImageMetaData image : overlapSession.getImages()) {
 						WptType wpt = factory.createWptType();
-						wpt.setLat(image.getLatitude());
-						wpt.setLon(image.getLongitude());
+						if(image.getLocation()!=null)
+						{
+							wpt.setLat(image.getLocation().getLatitude());
+							wpt.setLon(image.getLocation().getLongitude());
+						}
 						wpt.setName("Overlap Session " + overlapSessionCount + ": " + "Photo: " + image.getId() + ".jpg");
-						wpt.setDesc("Overlap Session " + overlapSessionCount + ": " + image.getDescription());
 						wpt.setType("photo");
 						wpt.setTime(mapDate(image.getCreatedAt()));
 						gpx.getWpt().add(wpt);
 					}
 				}
-		
+
 				TrkType trk = factory.createTrkType();
 				trk.setName("Overlap Session " + overlapSessionCount + ": " + overlapSession.getId());
 				trk.setDesc("Overlap Session " + overlapSessionCount + ": " + overlapSession.getNotes());
 				trk.setType(mapSport(overlapSession.getSportTypeId()));
 				trk.getTrkseg().addAll(overlapSession.getGpx().getTrk().get(0).getTrkseg());
 				gpx.getTrk().add(trk);
-			}			
+			}
 		}
 	}
 
@@ -203,12 +207,14 @@ public class GpxSportSessionMapper implements SportSessionMapper<GpxType> {
 
 				if (compoundSession.getImages() != null) {
 					// Add the photos as "way points"
-					for (ImagesMetaData image : compoundSession.getImages()) {
+					for (ImageMetaData image : compoundSession.getImages()) {
 						WptType wpt = factory.createWptType();
-						wpt.setLat(image.getLatitude());
-						wpt.setLon(image.getLongitude());
+						if(image.getLocation() != null)
+						{
+							wpt.setLat(image.getLocation().getLatitude());
+							wpt.setLon(image.getLocation().getLongitude());
+						}
 						wpt.setName("Compound Session " + compoundSessionCount + ": " + "Photo: " + image.getId() + ".jpg");
-						wpt.setDesc("Compound Session " + compoundSessionCount + ": " + image.getDescription());
 						wpt.setType("photo");
 						wpt.setTime(mapDate(image.getCreatedAt()));
 						gpx.getWpt().add(wpt);

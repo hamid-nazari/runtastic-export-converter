@@ -20,9 +20,8 @@ import com.topografix.gpx._1._1.BoundsType;
 
 import me.crespel.runtastic.mapper.DelegatingSportSessionMapper;
 import me.crespel.runtastic.mapper.SportSessionMapper;
-import me.crespel.runtastic.model.ImagesMetaData;
+import me.crespel.runtastic.model.ImageMetaData;
 import me.crespel.runtastic.model.SportSession;
-import me.crespel.runtastic.model.SportSessionAlbums;
 import me.crespel.runtastic.model.User;
 import me.crespel.runtastic.parser.SportSessionParser;
 
@@ -76,49 +75,6 @@ public class ExportConverter
 	public SportSession getSportSession(File path, String id) throws FileNotFoundException, IOException
 	{
 		return parser.parseSportSession(new File(normalizeExportPath(path, SPORT_SESSIONS_DIR), id + ".json"), true);
-	}
-
-	public SportSession getSportSessionWithPhoto(File path, String photoid) throws FileNotFoundException, IOException
-	{
-		String sessionid = null;
-
-		File photofile = new File(normalizeExportPath(path, PHOTOS_DIR), photoid + ".jpg");
-		if (photofile.exists())
-		{
-			// photo file found ...
-
-			ImagesMetaData image = parser.parseImagesMetaData(new File(normalizeExportPath(path, PHOTOS_META_DATA_DIR), photoid + ".json"));
-			if (image != null)
-			{
-				// photo meta data file found ...
-
-				// search trough sport session album data, to find sport session related to the photo
-				File[] files = normalizeExportPath(path, PHOTOS_SPORT_SESSION_ALBUMS_DIR).listFiles(file -> file.getName().endsWith(".json"));
-				for (File file : files)
-				{
-					try
-					{
-						SportSessionAlbums mysessionalbum = parser.parseSportSessionAlbumsData(file);
-						if (mysessionalbum.getPhotosIds().contains(photoid))
-						{
-							// Sport session id found within sport session albums
-							sessionid = mysessionalbum.getId();
-						}
-					}
-					catch (IOException e)
-					{
-						throw new RuntimeException(e);
-					}
-				}
-			}
-		}
-
-		if (sessionid == null)
-		{
-			throw new FileNotFoundException("Sport Session file not found for photo id = '" + photoid + "'");
-		}
-
-		return getSportSession(path, sessionid);
 	}
 
 	public List<SportSession> convertSportSessions(File path, String format) throws FileNotFoundException, IOException
@@ -194,59 +150,62 @@ public class ExportConverter
 		// - Session D, overlaps only with B and C (this because B & C are in range of D, but not of A)
 		// but expected is that all mention sessions above are calculated as "overlapping"
 		// This circumstance will be "normalized" in a second step.
+		BoundsType bounds;
+		BoundsType bounds2;
+		BigDecimal diffMaxlat;
+		BigDecimal diffMaxlon;
+		BigDecimal diffMinlat;
+		BigDecimal diffMinlon;
+		List<SportSession> overlapSessions = null;
 		for (SportSession session : sessions)
 		{
-			if (session.getGpx() != null && session.getGpx().getMetadata() != null
-				&& session.getGpx().getMetadata().getBounds() != null)
+			if (session.getGpx() == null ||
+				session.getGpx().getMetadata() == null ||
+				session.getGpx().getMetadata().getBounds() == null)
+				continue;
+			overlapSessions = null;
+			for (SportSession session2 : sessions)
 			{
-				List<SportSession> overlapSessions = new ArrayList<>();
-				for (SportSession session2 : sessions)
+				if (session.getId().equals(session2.getId()) ||
+					!session.hasTimeOverlap(session2, 5 * 60) ||
+					session2.getGpx() == null ||
+					session2.getGpx().getMetadata() == null ||
+					session2.getGpx().getMetadata().getBounds() == null)
+					continue;
+
+				bounds = session.getGpx().getMetadata().getBounds();
+				bounds2 = session2.getGpx().getMetadata().getBounds();
+				if (bounds.getMaxlat() == null || bounds2.getMaxlat() == null)
+					continue;
+
+				diffMaxlat = bounds.getMaxlat().subtract(bounds2.getMaxlat()).abs();
+				diffMaxlon = bounds.getMaxlon().subtract(bounds2.getMaxlon()).abs();
+				diffMinlat = bounds.getMinlat().subtract(bounds2.getMinlat()).abs();
+				diffMinlon = bounds.getMinlon().subtract(bounds2.getMinlon()).abs();
+				if ((diffMaxlat.compareTo(diff) < 0) &&
+					(diffMaxlon.compareTo(diff) < 0) &&
+					(diffMinlat.compareTo(diff) < 0) &&
+					(diffMinlon.compareTo(diff) < 0))
 				{
-					if (!session.getId().equals(session2.getId()))
-					{
-						if ((session2.getGpx() != null && session2.getGpx().getMetadata() != null
-							&& session2.getGpx().getMetadata().getBounds() != null))
-						{
-							BoundsType bounds = session.getGpx().getMetadata().getBounds();
-							BoundsType bounds2 = session2.getGpx().getMetadata().getBounds();
-							if (bounds != null && bounds2 != null && bounds.getMaxlat() != null && bounds2.getMaxlat() != null)
-							{
-								BigDecimal diffMaxlat = bounds.getMaxlat().subtract(bounds2.getMaxlat()).abs();
-								BigDecimal diffMaxlon = bounds.getMaxlon().subtract(bounds2.getMaxlon()).abs();
-								BigDecimal diffMinlat = bounds.getMinlat().subtract(bounds2.getMinlat()).abs();
-								BigDecimal diffMinlon = bounds.getMinlon().subtract(bounds2.getMinlon()).abs();
-								if ((diffMaxlat.compareTo(diff) < 0) && (diffMaxlon.compareTo(diff) < 0)
-									&& (diffMinlat.compareTo(diff) < 0) && (diffMinlon.compareTo(diff) < 0))
-								{
-									// overlapping sport session found
-									overlapSessions.add(session2);
-								}
-							}
-						}
-					}
-				}
-				if (overlapSessions.size() > 0)
-				{
-					session.setOverlapSessions(overlapSessions);
+					if (overlapSessions == null)
+						overlapSessions = new ArrayList<>();
+					// overlapping sport session found
+					overlapSessions.add(session2);
 				}
 			}
+			if (overlapSessions != null)
+				session.setOverlapSessions(overlapSessions);
 		}
 		// (2) Normalize overlapping sport sessions
 		for (SportSession session : sessions)
 		{
-			if (session.getOverlapSessions() != null)
-			{
-				List<SportSession> normalizedOverlapSessions = new ArrayList<>();
-				for (SportSession overlapSession : session.getOverlapSessions())
-				{
-					addOverlapSessions(normalizedOverlapSessions, overlapSession);
-				}
-				session.setOverlapSessions(normalizedOverlapSessions);
-			}
-		}
-		// (3) Calculate inner and outer bound (of normalized overlapping sessions)
-		for (SportSession session : sessions)
-		{
+			if (session.getOverlapSessions() == null)
+				continue;
+			List<SportSession> normalizedOverlapSessions = new ArrayList<>();
+			for (SportSession overlapSession : session.getOverlapSessions())
+				addOverlapSessions(normalizedOverlapSessions, overlapSession);
+			session.setOverlapSessions(normalizedOverlapSessions);
+			// (3) Calculate inner and outer bound (of normalized overlapping sessions)
 			calculateInnerAndOuterBound(session);
 		}
 	}
