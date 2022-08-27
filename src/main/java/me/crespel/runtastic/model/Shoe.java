@@ -30,9 +30,9 @@ public class Shoe {
     private Integer initialDistance;
     private List<ShoeMilestone> milestones;
     private List<ShoeStatistic> statistics;
-    String id;
-    String equipmentId;
-    String equipmentType;
-    List<String> samplesIds;
+    public String id;
+    public String equipmentId;
+    public String equipmentType;
+    public List<String> samplesIds;
 
 }

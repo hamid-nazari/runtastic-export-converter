@@ -30,7 +30,7 @@ To run the command line tool, use the `jar-with-dependencies` JAR file in the `t
       list     <export path> <filter>
       user     <export path>
       info     <export path> <activity id>
-      convert  <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']
+      convert  <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx'] ['meta']
       overlap  <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']
       compound <export path> <activity id | 'all'> <destination path> ['gpx' | 'tcx']
       help

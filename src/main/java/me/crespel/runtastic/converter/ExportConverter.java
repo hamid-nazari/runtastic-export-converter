@@ -1,18 +1,21 @@
 package me.crespel.runtastic.converter;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -20,9 +23,10 @@ import org.apache.commons.io.filefilter.SuffixFileFilter;
 
 import com.topografix.gpx._1._1.BoundsType;
 
+import me.crespel.runtastic.RuntasticExportConverter;
 import me.crespel.runtastic.mapper.DelegatingSportSessionMapper;
 import me.crespel.runtastic.mapper.SportSessionMapper;
-import me.crespel.runtastic.model.ImageMetaData;
+import me.crespel.runtastic.model.Shoe;
 import me.crespel.runtastic.model.SportSession;
 import me.crespel.runtastic.model.User;
 import me.crespel.runtastic.parser.SportSessionParser;
@@ -44,6 +48,8 @@ public class ExportConverter
 	public static final String	PHOTOS_SPORT_SESSION_ALBUMS_DIR	= "Photos" + File.separator + "Images-meta-data" + File.separator + "Sport-session-albums";
 	public static final String	USER_DIR						= "User";
 	public static final String	DEFAULT_FORMAT					= "tcx";
+	public static final String	SHOES_DIR						= USER_DIR + File.separator + "Shoes";
+	public static final String	GEAR_MAP						= SHOES_DIR + File.separator + "gear_map.properties";
 
 	protected final SportSessionParser		parser	= new SportSessionParser();
 	protected final SportSessionMapper<?>	mapper	= new DelegatingSportSessionMapper();
@@ -118,18 +124,64 @@ public class ExportConverter
 		exportSportSession(session, dest, format);
 	}
 
-	public int exportSportSessions(File path, File dest, String format) throws FileNotFoundException, IOException
+	public int exportSportSessions(File path, File dest, String format, boolean withMetadata) throws FileNotFoundException, IOException
 	{
 		if (dest.exists() && !dest.isDirectory())
 			throw new IllegalArgumentException("Destination '" + dest + "' is not a valid directory");
+		boolean autoFormat = "auto".equalsIgnoreCase(format);
 		dest.mkdirs();
+		File gearMapFile = new File(path, GEAR_MAP);
+		Properties gearMap = null;
+		Map<String, Shoe> activityToShoeMap = null;
+		if (gearMapFile.exists())
+		{
+			System.out.println(" + Found gear mapping file at '" + gearMapFile + "'");
+			gearMap = new Properties();
+			try (BufferedReader rdr = Files.newBufferedReader(gearMapFile.toPath()))
+			{
+				gearMap.load(rdr);
+			}
+			if (!gearMap.isEmpty())
+				System.out.println(" + Loaded " + gearMap.size() + " gear mappings");
+		}
+		List<Shoe> shoes = Files.list(normalizeExportPath(path, SHOES_DIR).toPath())
+			.filter(p -> p.getFileName().toString().endsWith(".json"))
+			.map(p -> {
+				try
+				{
+					return parser.parseShoe(p.toFile());
+				}
+				catch (IOException ex)
+				{
+					ex.printStackTrace();
+					return null;
+				}
+			})
+			.filter(shoe -> shoe != null)
+			.collect(Collectors.toList());
+		if (!shoes.isEmpty())
+		{
+			System.out.println(" + Found " + shoes.size() + " shoe(s)");
+			activityToShoeMap = new HashMap<>();
+			for (Shoe s : shoes)
+			{
+				for (String activityID : s.samplesIds)
+					activityToShoeMap.put(activityID, s);
+			}
+			if (activityToShoeMap.isEmpty())
+				activityToShoeMap = null;
+			else
+				System.out.println(" + Found " + activityToShoeMap.size() + " activities with shoe");
+		}
+		Map<String, Shoe> activityToShoeMapFinal = activityToShoeMap;
+		Properties gearMapFinal = gearMap;
 		int total = (int) Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
 			.filter(p -> p.getFileName().toString().endsWith(".json"))
 			.count();
 		AtomicInteger counter = new AtomicInteger();
 		return (int) Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
 			.filter(p -> p.getFileName().toString().endsWith(".json"))
-			.parallel()
+			// .parallel()
 			.map(file -> {
 				try
 				{
@@ -143,7 +195,48 @@ public class ExportConverter
 			})
 			.filter(s -> s != null)
 			.map(session -> {
-				mapper.mapSportSession(session, format, new File(dest, buildFileName(session, format)));
+				ZonedDateTime now = ZonedDateTime.now();
+				String effFormat = format;
+				if (autoFormat)
+				{
+					if (session.distance > 0 && (session.gpx != null || session.gpsData != null))
+						effFormat = "gpx";
+					else
+						effFormat = "tcx";
+				}
+				String fileName = buildFileName(session, effFormat);
+				mapper.mapSportSession(session, effFormat, new File(dest, fileName));
+				if (withMetadata)
+				{
+					Properties metaData = new Properties();
+					metaData.setProperty("name", RuntasticExportConverter.mapPartOfDay(session.startTime) + " " + RuntasticExportConverter.mapSportType(session.sportTypeId));
+					metaData.setProperty("external_id", session.id);
+					metaData.setProperty("description", "Imported from Adidas Running (Runtastic) at " + now + " through my automated script (original:" + session.id + ")");
+					metaData.setProperty("strava_sport_type", RuntasticExportConverter.mapToStravaSportType(session.sportTypeId));
+					metaData.setProperty("format", effFormat);
+					if (activityToShoeMapFinal != null)
+					{
+						Shoe shoe = activityToShoeMapFinal.get(session.id);
+						if (shoe != null)
+						{
+							metaData.setProperty("runtastic_shoe", shoe.id);
+							if (gearMapFinal != null)
+							{
+								String gearID = gearMapFinal.getProperty(shoe.id);
+								if (gearID != null)
+									metaData.setProperty("strava_gear_id", gearID);
+							}
+						}
+					}
+					try (BufferedWriter bw = Files.newBufferedWriter(dest.toPath().resolve(fileName + ".properties")))
+					{
+						metaData.store(bw, "Generated on " + now);
+					}
+					catch (Exception ex)
+					{
+						ex.printStackTrace();
+					}
+				}
 				int c = counter.incrementAndGet();
 				if (c % 5 == 0)
 					System.out.println(ZonedDateTime.now() + " - Converted " + c + " / " + total + " (" + (c * 100 / total) + "%) sessions");

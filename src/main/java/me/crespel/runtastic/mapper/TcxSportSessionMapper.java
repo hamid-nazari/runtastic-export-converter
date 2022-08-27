@@ -68,7 +68,7 @@ public class TcxSportSessionMapper implements SportSessionMapper<TrainingCenterD
 		lap.setCalories(session.getCalories());
 		lap.setAverageHeartRateBpm(mapHeartRate(session.getPulseAvg()));
 		lap.setMaximumHeartRateBpm(mapHeartRate(session.getPulseMax()));
-		lap.setMaximumSpeed(session.getMaxSpeed().doubleValue());
+		lap.setMaximumSpeed(session.getMaxSpeed() != null ? session.getMaxSpeed().doubleValue() : 0d);
 		lap.setTriggerMethod(TriggerMethodT.MANUAL);
 		lap.getTrack().add(track);
 
@@ -138,7 +138,7 @@ public class TcxSportSessionMapper implements SportSessionMapper<TrainingCenterD
 		case "3":
 			return SportT.BIKING;
 		default:
-			return SportT.OTHER;	
+			return SportT.OTHER;
 		}
 	}
 

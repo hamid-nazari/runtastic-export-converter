@@ -21,13 +21,13 @@ import lombok.ToString;
 public class SportSession implements Comparable<SportSession>
 {
 
-	private Date			startTime;
-	private Date			endTime;
+	public Date				startTime;
+	public Date				endTime;
 	private Date			createdAt;
 	private Date			updatedAt;
 	private Integer			startTimeTimezoneOffset;
 	private Integer			endTimeTimezoneOffset;
-	private Integer			distance;
+	public Integer			distance;
 	private Integer			duration;
 	private Integer			elevationGain;
 	private Integer			elevationLoss;
@@ -40,34 +40,34 @@ public class SportSession implements Comparable<SportSession>
 	private Integer			durationPerKm;
 	private BigDecimal		temperature;
 	private String			notes;
-	private Integer			pulseAvg;
-	private Integer			pulseMax;
+	public Integer			pulseAvg;
+	public Integer			pulseMax;
 	private Boolean			manual;
 	private Boolean			edited;
 	private Boolean			completed;
 	private Boolean			liveTrackingActive;
 	private Boolean			liveTrackingEnabled;
 	private Boolean			cheeringEnabled;
-	private Boolean			indoor;
+	public Boolean			indoor;
 	private Boolean			altitudeRefined;
 	public String			id;
 	private String			weatherConditionId;
 	private String			surfaceId;
 	private String			subjectiveFeelingId;
-	private String			sportTypeId;
+	public String			sportTypeId;
 	private List<String>	userEquipmentIds;
 
 	@JsonIgnore
 	private List<ElevationData> elevationData;
 
 	@JsonIgnore
-	private List<GpsData> gpsData;
+	public List<GpsData> gpsData;
 
 	@JsonIgnore
-	private GpxType gpx;
+	public GpxType gpx;
 
 	@JsonIgnore
-	private List<HeartRateData> heartRateData;
+	public List<HeartRateData> heartRateData;
 
 	@JsonIgnore
 	private List<ImageMetaData> images;
