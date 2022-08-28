@@ -1,29 +1,48 @@
 package me.crespel.runtastic;
 
+import java.awt.Desktop;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
+import javax.activity.InvalidActivityException;
+import javax.security.sasl.AuthenticationException;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.topografix.gpx._1._1.BoundsType;
 
 import me.crespel.runtastic.converter.ExportConverter;
 import me.crespel.runtastic.model.ImageMetaData;
 import me.crespel.runtastic.model.SportSession;
 import me.crespel.runtastic.model.User;
+import me.crespel.strava.model.AccessTokenResponse;
+import me.crespel.strava.model.ExportMetadata;
+import me.crespel.strava.model.FailureResponse;
+import okhttp3.FormBody;
+import okhttp3.MediaType;
+import okhttp3.MultipartBody;
+import okhttp3.MultipartBody.Builder;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 /**
  * Runtastic export converter main class.
@@ -249,8 +268,7 @@ public class RuntasticExportConverter
 		{
 			long startTime = System.currentTimeMillis();
 			int count = converter.exportSportSessions(path, dest, format, withMetadata);
-			long endTime = System.currentTimeMillis();
-			System.out.println(count + " activities successfully written to '" + dest + "' in " + (endTime - startTime) / 1000 + " seconds");
+			System.out.println(count + " activities successfully written to '" + dest + "' in " + Duration.ofMillis(System.currentTimeMillis() - startTime));
 		}
 		else
 		{
@@ -978,29 +996,288 @@ public class RuntasticExportConverter
 		return "Workout";
 	}
 
+	private static final int		STRAVA_15M_RATE_LIMIT		= 100;
+	private static final int		UNIFORM_INTER_UPLOAD_WAIT	= 15 * 60 * 1000 / STRAVA_15M_RATE_LIMIT;
+	private static final MediaType	MEDIA_TYPE_GZIP				= MediaType.parse("application/gzip");
+
 	private void doUploadStrava(Path convertedFolder, String clientID, String clientSecret, String code) throws FileNotFoundException, IOException
 	{
 		if (!Files.exists(convertedFolder) || !Files.isDirectory(convertedFolder))
 			throw new FileNotFoundException("No such directory '" + convertedFolder.toString() + "'");
 
-		long startTime = System.currentTimeMillis();
-		System.out.println("Uploading converted activities to Strava ...");
+		File uploadedFolder = convertedFolder.resolve("uploaded").toFile();
+
+		long startTime = System.nanoTime();
+		System.out.println("Uploading converted activities to Strava");
 
 		int total = (int) Files.list(convertedFolder)
 			.parallel()
-			.filter(f -> "properties".equals(FilenameUtils.getExtension(f.getFileName().toString())))
+			.filter(f -> "meta".equals(FilenameUtils.getExtension(f.getFileName().toString())))
 			.count();
 
 		System.out.println(" o Found " + total + " activities to be uploaded");
-		System.out.println(" o Obtaining access token from Strava ...");
-		
-		Socket socket = SSLSocketFactory.getDefault().createSocket("strava.com", 443);
-		socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: www.strava.com\r\n\r\n".getBytes());
-		try(InputStreamReader rdr = new InputStreamReader(socket.getInputStream()))
+		OkHttpClient client = new OkHttpClient();
+		ObjectMapper mapper = converter.parser.mapper;
+
+		AccessTokenResponse accessToken;
+		Path accessTokenFile = convertedFolder.resolve("access.token");
+		if (Files.exists(accessTokenFile))
 		{
+			System.out.println(" o Found a previously saved Strava acceess token");
+			accessToken = converter.parser.mapper.readValue(accessTokenFile.toFile(), AccessTokenResponse.class);
+			accessToken = checkAndRefreshAccessToken(client, mapper, accessTokenFile, accessToken, clientID, clientSecret);
+		}
+		else
+		{
+			System.out.println(" o Obtaining access token from Strava ...");
+
+			FormBody formBody = new FormBody.Builder()
+				.add("client_id", clientID)
+				.add("client_secret", clientSecret)
+				.add("code", code)
+				.add("grant_type", "authorization_code")
+				.build();
+
+			Request request = new Request.Builder()
+				.url("https://www.strava.com/api/v3/oauth/token")
+				.post(formBody)
+				.build();
+
+			try (Response response = client.newCall(request).execute())
+			{
+				accessToken = mapper.readValue(handleFailure(mapper, response, clientID), AccessTokenResponse.class);
+			}
+			mapper.writeValue(accessTokenFile.toFile(), accessToken);
+			System.out.println("   - Obtained and saved access token");
 		}
 
-		long endTime = System.currentTimeMillis();
-		System.out.println(total + " activities successfully uploaded in " + (endTime - startTime) / 1000 + " seconds");
+		AtomicBoolean stopNotified = new AtomicBoolean();
+		AtomicInteger counter = new AtomicInteger();
+		AtomicInteger throttleCounter = new AtomicInteger();
+		AccessTokenResponse[] finalAccessToken = new AccessTokenResponse[1];
+		finalAccessToken[0] = accessToken;
+		int rtotal = (int) Files.list(convertedFolder)
+			.parallel()
+			.filter(f -> !stopNotified.get() && "meta".equals(FilenameUtils.getExtension(f.getFileName().toString())))
+			.map(new Function<Path, Path>()
+			{
+
+				Path metaDataFile;
+
+				private boolean throttle()
+				{
+					int failures = throttleCounter.incrementAndGet();
+					int c = counter.get();
+					if (failures > 3)
+					{
+						stopNotified.set(true);
+						System.err.println("   - Upload terminated at " + c + " uploads (" + metaDataFile.getFileName() + ") since daily upload limit is reached");
+						return false;
+					}
+					Duration duration = Duration.ofNanos(System.nanoTime() - startTime);
+					double per15m = (duration.getSeconds() == 0 ? 0d : c / ((double) duration.getSeconds())) * 60 * 15;
+					int pause = (15 - (int) (duration.toMinutes() % 15)) + 1;
+					System.out.println("   - Waiting after " + c + " uploads for " + pause + "m to adjust current upload rate of " + (int) per15m + "/15m");
+					try
+					{
+						Thread.sleep(pause * 60 * 1000);
+					}
+					catch (Exception ex)
+					{}
+					return true;
+				}
+
+				@Override
+				public Path apply(Path metaDataFile)
+				{
+					if (stopNotified.get())
+						return null;
+					this.metaDataFile = metaDataFile;
+					while (true)
+					{
+						try
+						{
+							finalAccessToken[0] = checkAndRefreshAccessToken(client, mapper, accessTokenFile, finalAccessToken[0], clientID, clientSecret);
+						}
+						catch (InvalidActivityException ex)
+						{
+							if (throttle())
+								continue;
+							stopNotified.set(true);
+							ex.printStackTrace();
+							return null;
+						}
+						catch (Exception ex)
+						{
+							if (throttle())
+								continue;
+							stopNotified.set(true);
+							ex.printStackTrace();
+							return null;
+						}
+
+						try
+						{
+							ExportMetadata metaData = mapper.readValue(metaDataFile.toFile(), ExportMetadata.class);
+
+							File activityFile = metaDataFile.resolveSibling(metaData.fileName).toFile();
+							if (!activityFile.exists())
+							{
+								System.out.println("   - Skipping " + metaDataFile);
+								return null;
+							}
+
+							Builder postBodyBuilder = new MultipartBody.Builder()
+								.addFormDataPart("name", metaData.name)
+								.addFormDataPart("description", metaData.description)
+								.addFormDataPart("external_id", metaData.externalId)
+								.addFormDataPart("sport_type", metaData.sportType)
+								.addFormDataPart("data_type", metaData.dataType)
+								.addFormDataPart("commute", "false")
+								.addFormDataPart("trainer", "false")
+								.addFormDataPart("trainer", "false")
+								.addFormDataPart("file", metaData.fileName, RequestBody.create(activityFile, MEDIA_TYPE_GZIP));
+							if (metaData.gearId != null)
+								postBodyBuilder.addFormDataPart("gear_id", metaData.gearId);
+							Request request = new Request.Builder()
+								.url("https://www.strava.com/api/v3/uploads")
+								.addHeader("Authorization", finalAccessToken[0].token_type + " " + finalAccessToken[0].access_token)
+								.post(postBodyBuilder.build())
+								.build();
+
+							try (Response response = client.newCall(request).execute())
+							{
+								handleFailure(mapper, response, clientID);
+							}
+							throttleCounter.set(0);
+
+							FileUtils.moveFileToDirectory(metaDataFile.toFile(), uploadedFolder, true);
+							FileUtils.moveFileToDirectory(activityFile, uploadedFolder, false);
+							File rawActivityFile = metaDataFile.resolveSibling(FilenameUtils.getBaseName(activityFile.getName())).toFile();
+							if (rawActivityFile.exists())
+								FileUtils.moveFileToDirectory(rawActivityFile, uploadedFolder, false);
+
+							int c = counter.incrementAndGet();
+							if (c % 5 == 0)
+							{
+								Duration duration = Duration.ofNanos(System.nanoTime() - startTime);
+								double per15m = (duration.getSeconds() == 0 ? 0d : c / ((double) duration.getSeconds())) * 60 * 15;
+								System.out.println("   - " + ZonedDateTime.now() + ": Uploaded " + c + " / " + total + " (" + (c * 100 / total) + "%) activities (" + ((int) per15m) + "/15m)");
+							}
+						}
+						catch (AuthenticationException ex)
+						{
+							stopNotified.set(true);
+							ex.printStackTrace();
+							return null;
+						}
+						catch (InvalidActivityException ex)
+						{
+							if (throttle())
+								continue;
+							stopNotified.set(true);
+							ex.printStackTrace();
+							return null;
+						}
+						catch (Exception ex)
+						{
+							if (throttle())
+								continue;
+							stopNotified.set(true);
+							ex.printStackTrace();
+							return null;
+						}
+						return metaDataFile;
+					}
+				}
+			})
+			.filter(f -> f != null)
+			.count();
+
+		System.out.println(rtotal + " activities successfully uploaded in " + Duration.ofNanos(System.nanoTime() - startTime));
+	}
+
+	private static String handleFailure(ObjectMapper mapper, Response response, String clientID) throws IOException
+	{
+		try (ResponseBody body = response.body())
+		{
+			String bodyString = body.string().trim();
+			if (response.isSuccessful())
+				return bodyString;
+			FailureResponse errorResponse = null;
+			try
+			{
+				errorResponse = mapper.readValue(bodyString, FailureResponse.class);
+			}
+			catch (Exception ex)
+			{}
+			if (errorResponse == null)
+				throw new IOException("HTTP failure (" + response.code() + ")");
+			if ("Rate Limit Exceeded".equalsIgnoreCase(errorResponse.message))
+				throw new InvalidActivityException("Strava API rate limit reached");
+			if ("Bad Request".equalsIgnoreCase(errorResponse.message) &&
+				errorResponse.errors != null && errorResponse.errors.length != 0
+				&& "AuthorizationCode".equalsIgnoreCase(errorResponse.errors[0].resource)
+				&& "code".equalsIgnoreCase(errorResponse.errors[0].field))
+			{
+				URI oauthUrl = null;
+				try
+				{
+					oauthUrl = new URI("https://www.strava.com/oauth/authorize?client_id=" + clientID + "&redirect_uri=https://localhost/response&response_type=code&scope=read,read_all,profile:read_all,profile:write,activity:read_all,activity:write");
+					Desktop.getDesktop().browse(oauthUrl);
+				}
+				catch (URISyntaxException ex)
+				{
+					// TODO Auto-generated catch block
+					ex.printStackTrace();
+				}
+				throw new AuthenticationException("Supplied Strava OAuth authentication 'code' is not valid. Please acquire a new one:\r\n" + oauthUrl);
+			}
+			throw new IOException("Strava API failure '" + errorResponse.message + "' (" + response.code() + ")");
+		}
+	}
+
+	private static synchronized AccessTokenResponse checkAndRefreshAccessToken(OkHttpClient client, ObjectMapper mapper, Path accessTokenFile, AccessTokenResponse accessToken, String clientID, String clientSecret) throws IOException
+	{
+		if (!accessToken.isExpired())
+			return accessToken;
+		System.out.println("   - Access token is expired and needs a refresh");
+		accessToken = refreshAccessToken(client, mapper, accessTokenFile, accessToken, clientID, clientSecret);
+		System.out.println("   - Refreshed and saved access token");
+		return accessToken;
+	}
+
+	private static AccessTokenResponse refreshAccessToken(OkHttpClient client, ObjectMapper mapper, Path accessTokenFile, AccessTokenResponse accessToken, String clientID, String clientSecret) throws IOException
+	{
+		FormBody formBody = new FormBody.Builder()
+			.add("client_id", clientID)
+			.add("client_secret", clientSecret)
+			.add("refresh_token", accessToken.refresh_token)
+			.add("grant_type", "refresh_token")
+			.build();
+
+		Request request = new Request.Builder()
+			.url("https://www.strava.com/api/v3/oauth/token")
+			.post(formBody)
+			.build();
+
+		try (Response response = client.newCall(request).execute())
+		{
+			accessToken = mapper.readValue(handleFailure(mapper, response, clientID), AccessTokenResponse.class);
+		}
+		catch (Exception ex)
+		{
+			try
+			{
+				Files.deleteIfExists(accessTokenFile);
+			}
+			catch (Exception ex1)
+			{}
+			throw ex;
+		}
+
+		mapper.writeValue(accessTokenFile.toFile(), accessToken);
+
+		return accessToken;
 	}
 }

@@ -1,14 +1,15 @@
 package me.crespel.runtastic.converter;
 
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.zip.GZIPOutputStream;
 
 import org.apache.commons.io.filefilter.SuffixFileFilter;
 
@@ -30,6 +32,7 @@ import me.crespel.runtastic.model.Shoe;
 import me.crespel.runtastic.model.SportSession;
 import me.crespel.runtastic.model.User;
 import me.crespel.runtastic.parser.SportSessionParser;
+import me.crespel.strava.model.ExportMetadata;
 
 /**
  * Export directory converter.
@@ -51,7 +54,7 @@ public class ExportConverter
 	public static final String	SHOES_DIR						= USER_DIR + File.separator + "Shoes";
 	public static final String	GEAR_MAP						= SHOES_DIR + File.separator + "gear_map.properties";
 
-	protected final SportSessionParser		parser	= new SportSessionParser();
+	public final SportSessionParser			parser	= new SportSessionParser();
 	protected final SportSessionMapper<?>	mapper	= new DelegatingSportSessionMapper();
 
 	public List<SportSession> listSportSessions(File path, boolean full) throws FileNotFoundException, IOException
@@ -181,7 +184,7 @@ public class ExportConverter
 		AtomicInteger counter = new AtomicInteger();
 		return (int) Files.list(normalizeExportPath(path, SPORT_SESSIONS_DIR).toPath())
 			.filter(p -> p.getFileName().toString().endsWith(".json"))
-			// .parallel()
+			.parallel()
 			.map(file -> {
 				try
 				{
@@ -205,32 +208,43 @@ public class ExportConverter
 						effFormat = "tcx";
 				}
 				String fileName = buildFileName(session, effFormat);
-				mapper.mapSportSession(session, effFormat, new File(dest, fileName));
+				Path activityFile = new File(dest, fileName).toPath();
+				mapper.mapSportSession(session, effFormat, activityFile.toFile());
 				if (withMetadata)
 				{
-					Properties metaData = new Properties();
-					metaData.setProperty("name", RuntasticExportConverter.mapPartOfDay(session.startTime) + " " + RuntasticExportConverter.mapSportType(session.sportTypeId));
-					metaData.setProperty("external_id", session.id);
-					metaData.setProperty("description", "Imported from Adidas Running (Runtastic) at " + now + " through my automated script (original:" + session.id + ")");
-					metaData.setProperty("strava_sport_type", RuntasticExportConverter.mapToStravaSportType(session.sportTypeId));
-					metaData.setProperty("format", effFormat);
+					ExportMetadata metaData = new ExportMetadata();
+					metaData.name = RuntasticExportConverter.mapPartOfDay(session.startTime) + " " + RuntasticExportConverter.mapSportType(session.sportTypeId);
+					metaData.externalId = session.id;
+					metaData.description = "Imported from Adidas Running (Runtastic) at " + now + " through my automated script (original:" + session.id + ")";
+					metaData.sportType = RuntasticExportConverter.mapToStravaSportType(session.sportTypeId);
+					metaData.dataType = effFormat;
+					try
+					{
+						activityFile = gzip(activityFile);
+						metaData.dataType += ".gz";
+					}
+					catch (IOException ex)
+					{
+						ex.printStackTrace();
+					}
+					metaData.fileName = activityFile.getFileName().toString();
 					if (activityToShoeMapFinal != null)
 					{
 						Shoe shoe = activityToShoeMapFinal.get(session.id);
 						if (shoe != null)
 						{
-							metaData.setProperty("runtastic_shoe", shoe.id);
+							metaData.shoe = shoe.id;
 							if (gearMapFinal != null)
 							{
 								String gearID = gearMapFinal.getProperty(shoe.id);
 								if (gearID != null)
-									metaData.setProperty("strava_gear_id", gearID);
+									metaData.gearId = gearID;
 							}
 						}
 					}
-					try (BufferedWriter bw = Files.newBufferedWriter(dest.toPath().resolve(fileName + ".properties")))
+					try
 					{
-						metaData.store(bw, "Generated on " + now);
+						this.parser.mapper.writeValue(dest.toPath().resolve(fileName + ".meta").toFile(), metaData);
 					}
 					catch (Exception ex)
 					{
@@ -505,5 +519,20 @@ public class ExportConverter
 		if (files.length == 0)
 			throw new FileNotFoundException("Can't find a user.json file");
 		return files[0];
+	}
+
+	public static Path gzip(Path input) throws IOException
+	{
+		Path compressedFile = input.resolveSibling(input.getFileName().toString() + ".gz");
+		try (InputStream is = Files.newInputStream(input);
+			OutputStream os = Files.newOutputStream(compressedFile);
+			GZIPOutputStream gzo = new GZIPOutputStream(os))
+		{
+			byte[] buffer = new byte[1024];
+			int len;
+			while ((len = is.read(buffer)) != -1)
+				gzo.write(buffer, 0, len);
+		}
+		return compressedFile;
 	}
 }

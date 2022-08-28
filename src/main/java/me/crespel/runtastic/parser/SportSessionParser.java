@@ -52,7 +52,7 @@ public class SportSessionParser
 	public static final String	PHOTOS_META_DATA_DIR	= PHOTOS_DIR + File.separator + "Images-meta-data";
 	public static final String	USER_DIR				= "User";
 
-	protected final ObjectMapper mapper = new ObjectMapper();
+	public final ObjectMapper mapper = new ObjectMapper();
 
 	private static Map<String, List<ImageMetaData>> imagesCache;
 
