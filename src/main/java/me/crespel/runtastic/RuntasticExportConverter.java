@@ -1057,7 +1057,6 @@ public class RuntasticExportConverter
 		AccessTokenResponse[] finalAccessToken = new AccessTokenResponse[1];
 		finalAccessToken[0] = accessToken;
 		int rtotal = (int) Files.list(convertedFolder)
-			.parallel()
 			.filter(f -> !stopNotified.get() && "meta".equals(FilenameUtils.getExtension(f.getFileName().toString())))
 			.map(new Function<Path, Path>()
 			{
