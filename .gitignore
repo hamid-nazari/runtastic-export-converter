@@ -1,7 +1,4 @@
-.project
-.classpath
 .factorypath
-.settings
 .vscode
 target
 *.gpx
